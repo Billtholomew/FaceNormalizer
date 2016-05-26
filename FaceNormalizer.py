@@ -37,10 +37,6 @@ def interpolate_cpoly(cnt,npts=10):
         dx = pt[1]-cx
         theta = np.arctan2(dy,dx)
         radius = np.sqrt(dx**2+dy**2)
-        #print theta,radius
-        #x = radius*np.cos(theta)+cx
-        #y = radius*np.sin(theta)+cy
-        #cnt[i] = [[y,x]]
         polar.append((theta,radius))
     polar = sorted(polar,key=lambda x:x[0])
     cnt2 = []
@@ -58,18 +54,12 @@ def interpolate_cpoly(cnt,npts=10):
                 break
         x = int(irad*np.cos(itheta)+cx)
         y = int(irad*np.sin(itheta)+cy)
-        cnt2.append([[y,x]])
-    #raw_input()
-    cnt2 = np.asarray(cnt2)    
+        cnt2.append([[y,x]])   
     return cnt2
 
-def threshold_image(im,imgray,mu,sig):
+def threshold_image(im,imgray,eyes,mu,sig):
     mu = mu.astype(int)
     sig = sig.astype(int)
-    eyes = eye_cascade.detectMultiScale(imgray)
-    eyes = [eye for eye in eyes if eye[1]<imgray.shape[0]/2]
-    if len(eyes)<2:
-        return None
     for (ex,ey,ew,eh) in eyes:
         im[ey:ey+eh,ex:ex+ew,0] = mu[0]
         im[ey:ey+eh,ex:ex+ew,1] = mu[1]
@@ -99,7 +89,13 @@ def get_fpoints(rects, im, imgray):
         im2 = im[y:y2,x:x2]
         im3 = im[y+0.25*h:y+0.7*h,x+0.25*w:x+0.75*w]
         mu,sig = cv2.meanStdDev(im3)
-        thresh = threshold_image(im2.copy(),imgray2,mu,sig)
+        eyes = eye_cascade.detectMultiScale(imgray2)
+        #print imgray.shape
+        #print eyes
+        eyes = [eye for eye in eyes if eye[1]<imgray2.shape[0]/2]
+        if len(eyes)!=2:
+            continue
+        thresh = threshold_image(im2.copy(),imgray2,eyes,mu,sig)
         if thresh is None:
             continue
         contours, hierarchy = cv2.findContours(thresh,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
@@ -109,12 +105,19 @@ def get_fpoints(rects, im, imgray):
         contours = [cv2.convexHull(cnt) for cnt in contours]
         if len(contours)==0:
             continue
-        contour = interpolate_cpoly(contours[0])
-        for pt in contours[0]:
-            pt = pt[0]
-            # (img, center, radius, color, thickness=1, lineType=8, shift=0
-            cv2.circle(im2, (pt[0],pt[1]), 1, (0,0,255), 3)
-        for pt in contour:
+        facePoints = interpolate_cpoly(contours[0])
+        # add eye points
+        for (ex,ey,ew,eh) in eyes:
+            cx,cy = int(ex),int(ey+0.5*eh)
+            facePoints.append([[cx,cy]])
+            cx,cy = int(ex+ew),int(ey+0.5*eh)
+            facePoints.append([[cx,cy]])
+            cx,cy = int(ex+0.5*ew),int(ey)
+            facePoints.append([[cx,cy]])
+            cx,cy = int(ex+0.5*ew),int(ey+eh)
+            facePoints.append([[cx,cy]])
+        facePoints = np.asarray(facePoints)
+        for pt in facePoints:
             pt = pt[0]
             # (img, center, radius, color, thickness=1, lineType=8, shift=0
             cv2.circle(im2, (pt[0],pt[1]), 1, (0,255,255), 3)
