@@ -14,8 +14,8 @@ fps = 30
 # Number of frames to take during camera ramps
 ramp_frames = 30
 
-face_cascade = cv2.CascadeClassifier('../../Data/haarcascade_frontalface_default.xml')
-eye_cascade = cv2.CascadeClassifier('../../Data/haarcascades/haarcascade_eye.xml')
+face_cascade = cv2.CascadeClassifier('C:/opencv/sources/data/haarcascades/haarcascade_frontalface_default.xml')
+eye_cascade = cv2.CascadeClassifier('C:/opencv/sources/data/haarcascades/haarcascade_eye.xml')
 
 def detect_faces(im):
     rects = face_cascade.detectMultiScale(im, 1.3, 5)
