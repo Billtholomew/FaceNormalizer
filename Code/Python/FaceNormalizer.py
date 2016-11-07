@@ -2,6 +2,8 @@ import sys, traceback, time
 import cv2
 import numpy as np
 
+import image_processing as ip
+
 camera_port = 0
 # FPS to use when ramping the camera
 fps = 30
@@ -14,45 +16,20 @@ eye_cascade = cv2.CascadeClassifier('C:/opencv/sources/data/haarcascades/haarcas
 
 def detect_faces(im):
     face_boxes = face_cascade.detectMultiScale(im, 1.3, 5)
-    if len(face_boxes) == 0:
-        return []
-    face_boxes[:, 2:] += face_boxes[:, :2]
-    face_boxes = filter(lambda (x1, y1, x2, y2): (x2 - x1) * (y2 - y1) > 128 * 128, face_boxes)
+    face_boxes = filter(lambda (x, y, w, h): w * h > 128 * 128, face_boxes)
     return face_boxes
 
 
-# interpolate new points in a convex polygon
-def interpolate_convex_poly(contour, vertices=10):
-    m = cv2.moments(contour)
-    cy = int(m['m01'] / m['m00'])
-    cx = int(m['m10'] / m['m00'])
-    polar = []
-    for i, pt in enumerate(contour):
-        pt = pt[0]
-        dy = pt[0] - cy
-        dx = pt[1] - cx
-        theta = np.arctan2(dy, dx)
-        radius = np.sqrt(dx ** 2 + dy ** 2)
-        polar.append((theta, radius))
-    polar = sorted(polar, key=lambda (theta, radius): theta)
-    cnt2 = []
-    for interpolation_theta in xrange(-180, 180, 360 / vertices):
-        interpolation_theta = interpolation_theta * np.pi / 180
-        # interpolation_theta is theta to inperolate with
-        interpolation_radius = 0  # interpolated radius
-        p2 = zip([polar[-1]] + polar[:-1], polar)
-        for pA, pB in p2:
-            theta_a, radius_a = pA
-            theta_b, radius_b = pB
-            interpolation_radius = (radius_a + radius_b) / 2
-            if theta_a <= interpolation_theta <= theta_b:
-                interpolation_radius = (interpolation_theta - theta_a) / (theta_b - theta_a) * (
-                radius_b - radius_a) + radius_a
-                break
-        x = int(interpolation_radius * np.cos(interpolation_theta) + cx)
-        y = int(interpolation_radius * np.sin(interpolation_theta) + cy)
-        cnt2.append([[y, x]])
-    return cnt2
+def face_ellipse_to_points(face_ellipse, vertices=10):
+    (cx, cy), (w, h), rotation = face_ellipse
+    rotation *= np.pi / 180
+    face_points = []
+    for theta in xrange(0, 360, 360 / vertices):
+        theta *= np.pi / 180
+        px = int(np.cos(theta - rotation) * w / 2 + cx)
+        py = int(np.sin(theta - rotation) * h / 2 + cy)
+        face_points.append([px, py])
+    return face_points
 
 
 def threshold_image(im, eyes, mu, sig):
@@ -75,50 +52,48 @@ def threshold_image(im, eyes, mu, sig):
 
 def get_face_points(face_boxes, im, im_grayscale):
     for face_box in face_boxes:
-        x, y, x2, y2 = face_box
-        w = x2 - x
-        h = y2 - y
-        x = int(x + 0.05 * w)
-        w = int(0.90 * w)
-        y = int(y - 0.10 * h)
-        h = int(h * 1.3)
-        x2 = x + w
-        y2 = y + h
-        im_grayscale_face_box = im_grayscale[y:y2, x:x2]
-        im2 = im[y:y2, x:x2]
-        im3 = im[y + 0.25 * h:y + 0.7 * h, x + 0.25 * w:x + 0.75 * w]
-        mu, sig = cv2.meanStdDev(im3)
+        x, y, w, h = face_box
+        # adjust height and origin y
+        y -= h * 0.25
+        h *= 1.5
+        im_grayscale_face_box = im_grayscale[y: y + h, x: x + w]
+        im2 = im[y: y + h, x: x + w]
+
         eyes = eye_cascade.detectMultiScale(im_grayscale_face_box)
-        eyes = [eye for eye in eyes if eye[1] < im_grayscale_face_box.shape[0] / 2]
+        # eyes should not be  below the "halfway" line of face
+        eyes = filter(lambda (eye_x, eye_y, eye_w, eye_h): eye_y < im_grayscale_face_box.shape[0] / 2, eyes)
         if len(eyes) != 2:
             continue
-        thresh = threshold_image(im2.copy(), im_grayscale_face_box, eyes, mu, sig)
-        if thresh is None:
-            continue
+
+        thresh = ip.im_mask(im_grayscale_face_box, sigma=0.5, image_is_grayscale=True)
+        thresh = cv2.erode(thresh, np.ones((3, 3), np.uint8), iterations=1)
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         # only keep contours that are big enough
-        contours = filter(lambda contour: cv2.contourArea(contour) > 0.33 * im_grayscale_face_box.size, contours)
-        # contours = [cv2.approxPolyDP(cnt,0.025*cv2.arcLength(cnt,True),True) for cnt in contours]
         contours = map(lambda contour: cv2.convexHull(contour), contours)
+        # contours = map(lambda contour: cv2.approxPolyDP(contour, 0.01 * cv2.arcLength(contour,True), True), contours)
+        contours = filter(lambda contour: cv2.contourArea(contour) > 0.33 * im_grayscale_face_box.size, contours)
+        contours = sorted(contours, key=lambda contour: cv2.contourArea(contour))
+        contours = map(lambda contour: cv2.fitEllipse(contour), contours)
+        # face contour is largest contour
         if len(contours) == 0:
             continue
-        face_points = interpolate_convex_poly(contours[0])
-        # add eye points
+        face_ellipse = contours[0]
+        face_points = face_ellipse_to_points(face_ellipse)
+        # add eye points, this is a diamond around the eye, not a rectangle
         for (ex, ey, ew, eh) in eyes:
             cx, cy = int(ex), int(ey + 0.5 * eh)
-            face_points.append([[cx, cy]])
+            face_points.append([cx, cy])
             cx, cy = int(ex + ew), int(ey + 0.5 * eh)
-            face_points.append([[cx, cy]])
+            face_points.append([cx, cy])
             cx, cy = int(ex + 0.5 * ew), int(ey)
-            face_points.append([[cx, cy]])
+            face_points.append([cx, cy])
             cx, cy = int(ex + 0.5 * ew), int(ey + eh)
-            face_points.append([[cx, cy]])
+            face_points.append([cx, cy])
         # find  mouth point
         # not sure how to do this...
 
         # draw facial points onto image
         for pt in face_points:
-            pt = pt[0]
             # (img, center, radius, color, thickness=1, lineType=8, shift=0
             cv2.circle(im2, (pt[0], pt[1]), 1, (0, 255, 255), 3)
 
