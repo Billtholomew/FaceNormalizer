@@ -4,12 +4,6 @@ import numpy as np
 
 import image_processing as ip
 
-camera_port = 0
-# FPS to use when ramping the camera
-fps = 30
-# Number of frames to take during camera ramps
-ramp_frames = 30
-
 face_cascade = cv2.CascadeClassifier('C:/opencv/sources/data/haarcascades/haarcascade_frontalface_default.xml')
 eye_cascade = cv2.CascadeClassifier('C:/opencv/sources/data/haarcascades/haarcascade_eye.xml')
 
@@ -69,15 +63,13 @@ def get_face_points(face_boxes, im, im_grayscale):
         thresh = cv2.erode(thresh, np.ones((3, 3), np.uint8), iterations=1)
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         # only keep contours that are big enough
-        contours = map(lambda contour: cv2.convexHull(contour), contours)
-        # contours = map(lambda contour: cv2.approxPolyDP(contour, 0.01 * cv2.arcLength(contour,True), True), contours)
         contours = filter(lambda contour: cv2.contourArea(contour) > 0.33 * im_grayscale_face_box.size, contours)
         contours = sorted(contours, key=lambda contour: cv2.contourArea(contour))
-        contours = map(lambda contour: cv2.fitEllipse(contour), contours)
+        contours = map(lambda contour: cv2.convexHull(contour), contours)
         # face contour is largest contour
         if len(contours) == 0:
             continue
-        face_ellipse = contours[0]
+        face_ellipse = cv2.fitEllipse(contours[0])
         face_points = face_ellipse_to_points(face_ellipse)
         # add eye points, this is a diamond around the eye, not a rectangle
         for (ex, ey, ew, eh) in eyes:
@@ -96,43 +88,26 @@ def get_face_points(face_boxes, im, im_grayscale):
         for pt in face_points:
             # (img, center, radius, color, thickness=1, lineType=8, shift=0
             cv2.circle(im2, (pt[0], pt[1]), 1, (0, 255, 255), 3)
-
-        cv2.imshow('FACE', im2)
-        cv2.waitKey(30)
-        pass
-        # cv2.waitKey(1000/(fps))
-        # cv2.rectangle(im,(x,y),(x+w,y+h),(255,0,0),2)
-    return im
-
-
-# Captures a single image from the camera and returns it in IplImage format
-def get_image():
-    # QueryFrame is the easiest way to get a full image out of a capture object
-    return_value, im = camera.read()
     return im
 
 
 def find_faces(fps, frame_count):
     while frame_count > 0:
-        # Don't need to actually save these images
-        im = get_image()
+        return_value, im = camera.read()
         image_with_face_points = np.copy(im)
         imgray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
         face_boxes = detect_faces(imgray)
         image_with_face_points = get_face_points(face_boxes, image_with_face_points, imgray)
         frame_count -= 1
-        # cv2.imshow('dst_rt', image_with_face_points)
-        # cv2.waitKey(1000/(fps))
-        # time.sleep(1/fps)
+        cv2.imshow('', image_with_face_points)
+        cv2.waitKey(1000/fps)
     return
 
-
-# Now we can set up the camera with the CaptureFromCAM() function. All it needs is
-# the index to a camera port. The 'camera' variable will be a cv2.capture object
 try:
     camera = []
+    camera_port = 0
     camera = cv2.VideoCapture(camera_port)
-    find_faces(60, 32)
+    find_faces(fps=45, frame_count=30)
 except Exception, e:
     print e
     traceback.print_exc(file=sys.stdout)
